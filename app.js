@@ -280,17 +280,38 @@ const booth = {
   async startCam() {
     this.stopCam();
     const msg = $('#msg'); msg.hidden = true;
-    if (!navigator.mediaDevices?.getUserMedia) { this.camError('this browser can’t use the camera'); return; }
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }, audio: this.mode === 'video' });
-      const v = $('#cam'); v.srcObject = this.stream; await v.play().catch(() => {});
-      if (this.mode === 'video') this.loopVideo();
-    } catch (e) { console.warn(e); this.camError(this.mode === 'video' ? 'camera or mic is blocked — allow them in your browser, then try again' : 'camera is blocked — allow it in your browser, then try again'); }
+    if (!navigator.mediaDevices?.getUserMedia) { this.camError('this browser can’t use the camera — try Chrome or Safari'); return; }
+    if (!window.isSecureContext) { this.camError('the camera only works on the https link'); return; }
+    await sleep(250); // give the camera a moment to free up after switching modes
+    const vid = [{ facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }, { facingMode: 'user' }, true];
+    let stream = null, lastErr = null, noMic = false;
+    const tryGet = async (c) => { try { return await navigator.mediaDevices.getUserMedia(c); } catch (e) { lastErr = e; return null; } };
+    for (const v of vid) {
+      stream = await tryGet({ video: v, audio: this.mode === 'video' ? { echoCancellation: true, noiseSuppression: true } : false });
+      if (stream) break;
+      if (lastErr && lastErr.name === 'NotAllowedError') break;
+    }
+    if (!stream && this.mode === 'video') { // mic missing, busy or refused: still let them record, just silent
+      for (const v of vid) { stream = await tryGet({ video: v, audio: false }); if (stream) { noMic = true; break; } }
+    }
+    if (!stream) { console.warn(lastErr); this.camError(this.errText(lastErr)); return; }
+    if (this.stage === 'off') { stream.getTracks().forEach((t) => t.stop()); return; }
+    this.stream = stream;
+    const v = $('#cam'); v.srcObject = stream; await v.play().catch(() => {});
+    if (noMic) toast('couldn’t reach your mic — the video will record without sound', 4200);
+    if (this.mode === 'video') this.loopVideo();
   },
-  stopCam() { if (this.stream) { this.stream.getTracks().forEach((t) => t.stop()); this.stream = null; } },
+  errText(e) {
+    const n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'SecurityError') return 'camera permission is blocked for this site — tap the camera/lock icon by the address bar, allow it, then try again';
+    if (n === 'NotReadableError' || n === 'AbortError') return 'your camera is busy — close other apps or tabs using it (zoom, meet, another photobooth tab), then try again';
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'no camera found on this device';
+    return 'the camera didn’t start (' + (n || 'unknown error') + ')';
+  },
+  stopCam() { if (this.stream) { this.stream.getTracks().forEach((t) => t.stop()); this.stream = null; } const v = $('#cam'); if (v) v.srcObject = null; },
   camError(text) {
     const msg = $('#msg'); msg.hidden = false;
-    const kids = [el('span', { text: 'oops! ' + text }), el('button', { class: 'btn', text: 'try again', onclick: () => this.startCam() })];
+    const kids = [el('span', { text: 'oops! ' + text, style: 'font-size:.8em;max-width:90%' }), el('button', { class: 'btn', text: 'try again', onclick: () => this.startCam() })];
     if (this.mode === 'photo') {
       const fi = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: (e) => this.fromFiles(e.target.files) });
       kids.push(el('label', { class: 'btn', text: 'or use 4 photos from your device' }, [fi]));
