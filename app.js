@@ -271,12 +271,11 @@ const home = {
 /* ------------------------------------------------------------------ booth */
 const booth = {
   mode: 'photo', stage: 'setup', frameIdx: 1, colour: false, stream: null, frames: [], raf: 0,
-  vs: new Set(['confetti', 'hat', 'cookie']), rec: null, chunks: [], vblob: null, vthumb: null,
   async enter(mode) {
     this.mode = mode; this.reset(); this.paintMode();
     await this.startCam();
   },
-  leave() { this.stage = 'off'; this.stopCam(); cancelAnimationFrame(this.raf); if (this.rec && this.rec.state !== 'inactive') this.rec.stop(); },
+  leave() { this.stage = 'off'; this.stopCam(); },
   async startCam() {
     this.stopCam();
     const msg = $('#msg'); msg.hidden = true;
@@ -284,22 +283,17 @@ const booth = {
     if (!window.isSecureContext) { this.camError('the camera only works on the https link'); return; }
     await sleep(250); // give the camera a moment to free up after switching modes
     const vid = [{ facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }, { facingMode: 'user' }, true];
-    let stream = null, lastErr = null, noMic = false;
+    let stream = null, lastErr = null;
     const tryGet = async (c) => { try { return await navigator.mediaDevices.getUserMedia(c); } catch (e) { lastErr = e; return null; } };
     for (const v of vid) {
-      stream = await tryGet({ video: v, audio: this.mode === 'video' ? { echoCancellation: true, noiseSuppression: true } : false });
+      stream = await tryGet({ video: v, audio: false });
       if (stream) break;
       if (lastErr && lastErr.name === 'NotAllowedError') break;
-    }
-    if (!stream && this.mode === 'video') { // mic missing, busy or refused: still let them record, just silent
-      for (const v of vid) { stream = await tryGet({ video: v, audio: false }); if (stream) { noMic = true; break; } }
     }
     if (!stream) { console.warn(lastErr); this.camError(this.errText(lastErr)); return; }
     if (this.stage === 'off') { stream.getTracks().forEach((t) => t.stop()); return; }
     this.stream = stream;
     const v = $('#cam'); v.srcObject = stream; await v.play().catch(() => {});
-    if (noMic) toast('couldn’t reach your mic — the video will record without sound', 4200);
-    if (this.mode === 'video') this.loopVideo();
   },
   errText(e) {
     const n = e && e.name;
@@ -312,7 +306,7 @@ const booth = {
   camError(text) {
     const msg = $('#msg'); msg.hidden = false;
     const kids = [el('span', { text: 'oops! ' + text, style: 'font-size:.8em;max-width:90%' }), el('button', { class: 'btn', text: 'try again', onclick: () => this.startCam() })];
-    if (this.mode === 'photo') {
+    {
       const fi = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: (e) => this.fromFiles(e.target.files) });
       kids.push(el('label', { class: 'btn', text: 'or use 4 photos from your device' }, [fi]));
     }
@@ -326,37 +320,25 @@ const booth = {
     $('#msg').hidden = true; this.print();
   },
   reset() {
-    this.stage = 'setup'; this.frames = []; this.vblob = null; this.vthumb = null;
+    this.stage = 'setup'; this.frames = [];
     const slot = $('#slot'); slot.classList.remove('run'); $('#stripImg').removeAttribute('src');
-    $('#hint').hidden = false; $('#acts').replaceChildren(); $('#tray').hidden = true;
+    $('#hint').hidden = false; $('#acts').replaceChildren();
     $('#count').textContent = ''; $('#pill').hidden = true; $('#go').disabled = false;
-    $('#playback').hidden = true; $('#playback').removeAttribute('src');
     this.paintMode();
   },
   paintMode() {
-    const v = this.mode === 'video';
-    $('#mStrip').classList.toggle('on', !v); $('#mVideo').classList.toggle('on', v);
-    $('#sw').hidden = v; $('#chips').hidden = !v; $('#framebar').hidden = v || this.stage !== 'setup';
-    $('#cam').hidden = v; $('#vcan').hidden = !v || this.stage === 'recorded';
-    $('#cam').classList.toggle('bw', !this.colour && !v);
-    $('#golbl').textContent = v ? (this.stage === 'recording' ? 'stop' : this.stage === 'recorded' ? 'done!' : 'record') : ({ setup: 'start', shooting: 'smile!', printing: 'printing…', printed: 'done!' }[this.stage] || 'start');
-    $('#go').classList.toggle('rec', v); $('#go').setAttribute('aria-label', v ? 'Record a video note' : 'Start taking photos');
-    $('#slotlbl').textContent = v ? 'your tape' : 'your strip';
-    $('#hint').textContent = v ? '(your tape drops in the tray when you’re done)' : '(empty for now — smile first!)';
+    $('#framebar').hidden = this.stage !== 'setup';
+    $('#cam').classList.toggle('bw', !this.colour);
+    $('#golbl').textContent = { setup: 'start', shooting: 'smile!', printing: 'printing…', printed: 'done!' }[this.stage] || 'start';
     $('#colourT').setAttribute('aria-checked', this.colour);
     $('#frameName').textContent = FRAMES[this.frameIdx][1];
-    this.paintChips(); this.paintMini();
+    this.paintMini();
   },
   async paintMini() {
     const c = await renderStrip(null, FRAMES[this.frameIdx][0]); $('#mini').src = c.toDataURL('image/jpeg', 0.7);
   },
-  paintChips() {
-    const L = [['confetti', 'confetti'], ['hat', 'party hat'], ['cookie', 'cookie'], ['strawberry', 'strawberry'], ['candle', 'candle'], ['balloons', 'balloons']];
-    $('#chips').replaceChildren(...L.map(([k, t]) => el('button', { class: 'btn' + (this.vs.has(k) ? ' on' : ''), 'aria-pressed': this.vs.has(k), text: (this.vs.has(k) ? '✓ ' : '') + t, onclick: () => { this.vs.has(k) ? this.vs.delete(k) : this.vs.add(k); this.paintChips(); } })));
-  },
   async go() {
     ac();
-    if (this.mode === 'video') return this.stage === 'recording' ? this.stopRec() : this.startRec();
     if (this.stage !== 'setup' || !this.stream) return;
     this.stage = 'shooting'; this.paintMode(); $('#go').disabled = true; $('#framebar').hidden = true;
     const v = $('#cam'), pill = $('#pill'), count = $('#count');
@@ -391,94 +373,11 @@ const booth = {
       el('button', { class: 'btn', text: 'not cute? redo it', onclick: () => { this.reset(); $('#msg').hidden = true; } }),
     );
   },
-  /* ---- video ---- */
-  loopVideo() {
-    const c = $('#vcan'), ctx = c.getContext('2d'), v = $('#cam');
-    c.width = 960; c.height = 720;
-    const conf = Array.from({ length: 46 }, () => ({ x: Math.random() * 960, y: Math.random() * -720, s: 8 + Math.random() * 10, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.2, vy: 2 + Math.random() * 3, c: ['#F07FA3', '#A9B56A', '#F8E08A', '#F5B3C7', '#FFFDF7'][Math.floor(Math.random() * 5)] }));
-    const balloons = [{ x: 120, y: 820, s: 0.9 }, { x: 830, y: 1100, s: 1.1 }];
-    const imgs = {}; ['hat', 'cookie', 'strawberry', 'balloon'].forEach((k) => loadImg(stSrc(k)).then((i) => (imgs[k] = i)));
-    const draw = (ts) => {
-      const t = ts / 1000;
-      ctx.fillStyle = '#3D4421'; ctx.fillRect(0, 0, 960, 720);
-      if (v.videoWidth) {
-        const vw = v.videoWidth, vh = v.videoHeight, want = 4 / 3; let sw = vw, sh = vh; if (vw / vh > want) sw = vh * want; else sh = vw / want;
-        ctx.save(); ctx.translate(960, 0); ctx.scale(-1, 1); ctx.drawImage(v, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, 960, 720); ctx.restore();
-      }
-      const bob = (k, x, y, w, ph = 0) => { const im = imgs[k]; if (!im) return; const h = w * im.naturalHeight / im.naturalWidth; ctx.save(); ctx.translate(x, y + Math.sin(t * 3.4 + ph) * 10); ctx.rotate(Math.sin(t * 3.4 + ph) * 0.1); ctx.drawImage(im, -w / 2, -h / 2, w, h); ctx.restore(); };
-      if (this.vs.has('balloons') && imgs.balloon) balloons.forEach((b) => { b.y -= 1.6 * b.s; if (b.y < -200) b.y = 820; const w = 150 * b.s; ctx.drawImage(imgs.balloon, b.x - w / 2 + Math.sin(t + b.x) * 12, b.y, w, w); });
-      if (this.vs.has('hat')) bob('hat', 480, 90, 170);
-      if (this.vs.has('cookie')) bob('cookie', 850, 600, 170, 1);
-      if (this.vs.has('strawberry')) bob('strawberry', 115, 600, 190, 2);
-      if (this.vs.has('candle')) {
-        ctx.save(); ctx.translate(480, 640);
-        ctx.fillStyle = '#A9B56A'; ctx.strokeStyle = '#2B2723'; ctx.lineWidth = 4; ctx.fillRect(-14, -70, 28, 80); ctx.strokeRect(-14, -70, 28, 80);
-        const fl = 1 + Math.sin(t * 22) * 0.12; ctx.scale(1, fl); ctx.beginPath(); ctx.moveTo(0, -120); ctx.quadraticCurveTo(22, -88, 0, -74); ctx.quadraticCurveTo(-22, -88, 0, -120); ctx.fillStyle = '#F7C64B'; ctx.fill(); ctx.stroke(); ctx.restore();
-      }
-      if (this.vs.has('confetti')) conf.forEach((p) => { p.y += p.vy; p.r += p.vr; if (p.y > 740) { p.y = -20; p.x = Math.random() * 960; } ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c; ctx.strokeStyle = '#2B2723'; ctx.lineWidth = 1.5; ctx.fillRect(-p.s / 2, -p.s * 0.7, p.s, p.s * 1.4); ctx.strokeRect(-p.s / 2, -p.s * 0.7, p.s, p.s * 1.4); ctx.restore(); });
-      this.raf = requestAnimationFrame(draw);
-    };
-    cancelAnimationFrame(this.raf); this.raf = requestAnimationFrame(draw);
-  },
-  startRec() {
-    if (!this.stream || this.stage === 'recorded') return;
-    const c = $('#vcan'), out = c.captureStream(30);
-    this.stream.getAudioTracks().forEach((tr) => out.addTrack(tr));
-    const types = ['video/mp4;codecs=avc1,mp4a', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
-    const type = types.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-    if (!window.MediaRecorder || !type) { toast('this browser can’t record video — try Chrome or Safari'); return; }
-    this.chunks = []; this.rec = new MediaRecorder(out, { mimeType: type, videoBitsPerSecond: 2_000_000 });
-    this.rec.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
-    this.rec.onstop = () => this.afterRec(type);
-    this.rec.start(250); this.stage = 'recording'; this.paintMode(); sfx.beep();
-    const pill = $('#pill'); pill.hidden = false; const t0 = Date.now();
-    setTimeout(async () => { this.vthumb = await canvasBlob(c, 'image/jpeg', 0.8); }, 1200);
-    const tick = () => {
-      if (this.stage !== 'recording') return;
-      const s = Math.min(10, Math.floor((Date.now() - t0) / 1000));
-      pill.replaceChildren(el('span', { class: 'dot rec-dot' }), el('span', { text: `rec 0:${String(s).padStart(2, '0')} / 0:10` }));
-      if (Date.now() - t0 >= 10000) return this.stopRec();
-      setTimeout(tick, 200);
-    };
-    tick();
-  },
-  stopRec() { if (this.rec && this.rec.state !== 'inactive') this.rec.stop(); this.stage = 'recorded'; $('#pill').hidden = true; },
-  async afterRec(type) {
-    const base = type.split(';')[0];
-    this.vblob = new Blob(this.chunks, { type: base });
-    if (!this.vthumb) this.vthumb = await canvasBlob($('#vcan'), 'image/jpeg', 0.8);
-    this.stopCam(); cancelAnimationFrame(this.raf);
-    const p = $('#playback'); p.src = URL.createObjectURL(this.vblob); p.hidden = false; p.loop = true; p.controls = true; p.play().catch(() => {});
-    $('#vcan').hidden = true; this.paintMode(); $('#go').disabled = true;
-    $('#hint').hidden = true; $('#tray').hidden = false; sfx.clunk();
-    $('#acts').replaceChildren(
-      el('button', { class: 'btn big sh-olive', text: 'pin it to the wall →', onclick: () => this.pinVideo() }),
-      el('button', { class: 'btn', text: 'redo', onclick: () => { this.reset(); $('#vcan').hidden = false; this.startCam(); } }),
-    );
-  },
-  pinVideo() {
-    const name = el('input', { maxlength: 40, placeholder: 'your name' });
-    const note = el('textarea', { maxlength: 500, placeholder: 'a little note for baz (optional)' });
-    const btn = el('button', { class: 'btn big sh-pink', text: 'pin it ★' });
-    btn.onclick = async () => {
-      btn.disabled = true; btn.textContent = 'pinning…';
-      try {
-        const id = uuid(), ext = this.vblob.type.includes('mp4') ? 'mp4' : 'webm';
-        await data.upload(`entries/${id}.${ext}`, this.vblob, this.vblob.type);
-        await data.upload(`entries/${id}-thumb.jpg`, this.vthumb, 'image/jpeg');
-        await data.add({ kind: 'video', media_path: `entries/${id}.${ext}`, thumb_path: `entries/${id}-thumb.jpg`, name: name.value.trim() || null, note: note.value.trim() || null });
-        modal.close(); toast('pinned to baz’s wall ★'); location.hash = '#/wall';
-      } catch (e) { console.error(e); btn.disabled = false; btn.textContent = 'pin it ★'; toast('couldn’t pin it — check your internet & try again'); }
-    };
-    modal.open([el('div', { class: 'form card' }, [el('h2', { text: 'sign your video note ♡' }), el('div', { class: 'lbl', text: 'signed,' }), name, el('div', { class: 'lbl', text: 'note' }), note]), el('div', { class: 'row-btns' }, [btn])]);
-  },
 };
 $('#go').addEventListener('click', () => booth.go());
 $('#colourT').addEventListener('click', () => { booth.colour = !booth.colour; booth.paintMode(); });
 $('#prevF').addEventListener('click', () => { booth.frameIdx = (booth.frameIdx + FRAMES.length - 1) % FRAMES.length; booth.paintMode(); });
 $('#nextF').addEventListener('click', () => { booth.frameIdx = (booth.frameIdx + 1) % FRAMES.length; booth.paintMode(); });
-$('#mStrip').addEventListener('click', () => { location.hash = '#/booth'; });
-$('#mVideo').addEventListener('click', () => { location.hash = '#/video'; });
 
 /* ------------------------------------------------------------------ doodle */
 const CRAYONS = [['#F07FA3', 'pink'], ['#A9B56A', 'olive'], ['#F8E08A', 'butter'], ['#2B2723', 'ink'], ['#FFFFFF', 'white']];
@@ -630,7 +529,7 @@ const wall = {
   rows: [], mode: 'auto',
   async enter() {
     $('#board').replaceChildren(el('div', { class: 'sticky', text: 'loading the wall…', style: 'grid-column:1/-1' }));
-    try { [this.rows, this.mode] = await Promise.all([data.entries(), data.mode()]); this.render(); }
+    try { const [rows, m] = await Promise.all([data.entries(), data.mode()]); this.rows = rows.filter((r) => r.kind === 'strip'); this.mode = m; this.render(); }
     catch (e) { console.error(e); $('#board').replaceChildren(el('div', { class: 'sticky', text: 'couldn’t load the wall — refresh?' })); }
   },
   async setMode(m) {
@@ -701,9 +600,9 @@ const views = ['home', 'booth', 'doodle', 'wall'];
 function show(v) { views.forEach((x) => ($('#' + x).hidden = x !== v)); scrollTo(0, 0); }
 async function route() {
   const h = location.hash || '#/';
-  if (!h.startsWith('#/booth') && h !== '#/video') booth.leave();
+  if (h !== '#/booth') booth.leave();
   if (h === '#/booth') { show('booth'); booth.enter('photo'); }
-  else if (h === '#/video') { show('booth'); booth.enter('video'); }
+  else if (h === '#/video') { location.hash = '#/booth'; return; }
   else if (h === '#/doodle') { if (!state.strip) { location.hash = '#/booth'; return; } show('doodle'); doodle.enter(); }
   else if (h === '#/wall') { show('wall'); wall.enter(); }
   else { show('home'); home.enter(); }
