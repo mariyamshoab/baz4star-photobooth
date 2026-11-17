@@ -123,11 +123,13 @@ const sfx = {
 function syncSound() { $$('.sndT').forEach((b) => { b.textContent = soundOn ? '♪ on' : '♪ off'; b.setAttribute('aria-pressed', soundOn); }); }
 $$('.sndT').forEach((b) => b.addEventListener('click', () => { soundOn = !soundOn; localStorage.setItem('bazSound', soundOn ? 'on' : 'off'); syncSound(); if (soundOn) sfx.beep(); }));
 syncSound();
-let songPlaying = false;
+if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch (e) {} }
+const songAudio = new Audio('assets/happy-birthday.mp3'); songAudio.preload = 'auto';
+const paintSong = () => $$('.songBtn').forEach((x) => (x.textContent = songAudio.paused ? '♪ play her song' : '■ stop the song'));
+songAudio.addEventListener('ended', paintSong); songAudio.addEventListener('pause', paintSong); songAudio.addEventListener('play', paintSong);
 $$('.songBtn').forEach((b) => b.addEventListener('click', () => {
-  if (songPlaying) return; songPlaying = true;
-  const sec = sfx.song(); $$('.songBtn').forEach((x) => (x.textContent = '♪ playing…'));
-  setTimeout(() => { songPlaying = false; $$('.songBtn').forEach((x) => (x.textContent = '♪ play her song')); }, sec * 1000 + 300);
+  if (songAudio.paused) { songAudio.currentTime = 0; songAudio.play().catch(() => toast('tap again to play the song')); }
+  else songAudio.pause();
 }));
 
 /* ------------------------------------------------------------------ assets */
@@ -246,7 +248,7 @@ const state = { strip: null, stripStyle: 'dots' };
 const home = {
   async enter() {
     const svg = $('#homeArt');
-    const setVB = () => svg.setAttribute('viewBox', wideMQ.matches ? '400 20 740 800' : '0 0 1440 900');
+    const setVB = () => svg.setAttribute('viewBox', wideMQ.matches ? '425 30 578 790' : '0 0 1440 900');
     setVB(); if (!home._mq) { home._mq = true; wideMQ.addEventListener('change', setVB); }
     const g = $('#featured'); const NS = 'http://www.w3.org/2000/svg';
     try {
