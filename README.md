@@ -1,4 +1,4 @@
-# baz4star's photobooth ♡
+# baz4star's photobooth 
 
 A little hand-drawn photobooth for baz's birthday. Friends step inside, take 4 photos (b&w or colour), watch the strip print, doodle and add stickers, then pin it to baz's cork-board wall. They can also leave 10-second video notes.
 
